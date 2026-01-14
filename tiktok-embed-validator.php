@@ -181,8 +181,8 @@ class TikTok_Embed_Validator {
 
 			return rest_ensure_response(
 				array(
-					'success'   => null,
-					'warning'   => true,
+					'success'   => false,
+					'error'     => 'video_url_not_found',
 					'message'   => __( 'Could not extract video URL. Unable to verify playback.', 'tiktok-embed-validator' ),
 					'video_id'  => $video_id,
 					'video_url' => null,
@@ -351,7 +351,7 @@ class TikTok_Embed_Validator {
 		if ( 403 === $status_code ) {
 			return new WP_Error(
 				'video_403',
-				__( 'Video source returned 403 Forbidden. The video file is blocked and will not play.', 'tiktok-embed-validator' )
+				__( 'The video file is blocked and will not play for visitors.', 'tiktok-embed-validator' )
 			);
 		}
 

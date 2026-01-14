@@ -2,14 +2,39 @@
  * TikTok Embed Validator - Editor Styles.
  */
 
+/* Form inside placeholder. */
+.tiktok-embed-validator-form {
+	display: flex;
+	width: 100%;
+	max-width: 600px;
+	gap: 8px;
+}
+
+.tiktok-embed-validator-form .tiktok-embed-validator-input {
+	flex: 1;
+	margin-bottom: 0;
+}
+
+.tiktok-embed-validator-form .tiktok-embed-validator-input input {
+	width: 100%;
+}
+
+.tiktok-embed-validator-button {
+	flex-shrink: 0;
+}
+
+/* Checking indicator. */
 .tiktok-embed-validator-checking {
 	display: flex;
 	align-items: center;
+	justify-content: center;
 	gap: 8px;
-	padding: 12px 16px;
-	margin-bottom: 16px;
-	background-color: #f0f0f1;
-	border-left: 4px solid #007cba;
+	width: 100%;
+	max-width: 600px;
+	padding: 12px;
+	margin-top: 16px;
+	background-color: #f0f6fc;
+	border-left: 3px solid #007cba;
 	border-radius: 2px;
 }
 
@@ -22,8 +47,12 @@
 	font-size: 13px;
 }
 
+/* Error notice. */
 .tiktok-embed-validator-error {
-	margin-bottom: 16px !important;
+	width: 100%;
+	max-width: 600px;
+	margin-top: 16px !important;
+	text-align: left;
 }
 
 .tiktok-embed-validator-error strong {
@@ -32,69 +61,20 @@
 	font-size: 14px;
 }
 
-.tiktok-embed-validator-error .tiktok-embed-validator-message {
+.tiktok-embed-validator-error p {
 	margin: 8px 0;
 }
 
-.tiktok-embed-validator-error .tiktok-embed-validator-detail {
-	margin: 8px 0;
-	font-size: 12px;
-	word-break: break-all;
-}
-
-.tiktok-embed-validator-error .tiktok-embed-validator-detail code {
-	display: block;
-	margin-top: 4px;
-	background: rgba(0, 0, 0, 0.07);
-	padding: 6px 8px;
-	border-radius: 2px;
-	font-size: 11px;
-	word-break: break-all;
-	cursor: help;
-}
-
-.tiktok-embed-validator-error .tiktok-embed-validator-status {
-	margin: 8px 0;
-	font-size: 12px;
-}
-
-.tiktok-embed-validator-error .tiktok-embed-validator-help {
-	margin: 12px 0;
-	padding: 12px;
-	background: rgba(0, 0, 0, 0.03);
-	border-radius: 4px;
-}
-
-.tiktok-embed-validator-error .tiktok-embed-validator-help p {
-	margin: 0 0 8px;
-	font-size: 12px;
-	color: #1e1e1e;
-}
-
-.tiktok-embed-validator-error .tiktok-embed-validator-help ul {
-	margin: 0 0 0 16px;
-	padding: 0;
-	list-style: disc;
-}
-
-.tiktok-embed-validator-error .tiktok-embed-validator-help li {
-	margin: 4px 0;
+.tiktok-embed-validator-help-text {
 	font-size: 12px;
 	color: #50575e;
+	font-style: italic;
 }
 
-.tiktok-embed-validator-error .tiktok-embed-validator-recheck {
+/* Action buttons. */
+.tiktok-embed-validator-actions {
+	display: flex;
+	align-items: center;
+	gap: 12px;
 	margin-top: 12px;
-}
-
-.tiktok-embed-validator-success {
-	margin-bottom: 16px !important;
-}
-
-/* Ensure notices display properly within embed blocks. */
-.wp-block-embed .tiktok-embed-validator-error,
-.wp-block-embed .tiktok-embed-validator-success,
-.wp-block-embed .tiktok-embed-validator-checking {
-	position: relative;
-	z-index: 1;
 }

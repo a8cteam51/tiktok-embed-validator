@@ -2,39 +2,31 @@
  * TikTok Embed Validator - Editor Styles.
  */
 
-/* Form inside placeholder. */
-.tiktok-embed-validator-form {
+/* Notice outside the block (when not selected). */
+.tiktok-embed-validator-notice-outside {
+	margin-bottom: 12px;
+}
+
+/* Notice inside the figure (when selected). */
+.tiktok-embed-validator-notice-inside {
+	order: -1;
+	margin-bottom: 12px;
+}
+
+/* Make figure use flex to allow order property. */
+.tiktok-embed-validator-wrapper figure.wp-block-embed {
 	display: flex;
-	width: 100%;
-	max-width: 600px;
-	gap: 8px;
-}
-
-.tiktok-embed-validator-form .tiktok-embed-validator-input {
-	flex: 1;
-	margin-bottom: 0;
-}
-
-.tiktok-embed-validator-form .tiktok-embed-validator-input input {
-	width: 100%;
-}
-
-.tiktok-embed-validator-button {
-	flex-shrink: 0;
+	flex-direction: column;
 }
 
 /* Checking indicator. */
 .tiktok-embed-validator-checking {
 	display: flex;
 	align-items: center;
-	justify-content: center;
 	gap: 8px;
-	width: 100%;
-	max-width: 600px;
-	padding: 12px;
-	margin-top: 16px;
+	padding: 12px 16px;
 	background-color: #f0f6fc;
-	border-left: 3px solid #007cba;
+	border-left: 4px solid #007cba;
 	border-radius: 2px;
 }
 
@@ -49,10 +41,7 @@
 
 /* Error notice. */
 .tiktok-embed-validator-error {
-	width: 100%;
-	max-width: 600px;
-	margin-top: 16px !important;
-	text-align: left;
+	margin: 0 !important;
 }
 
 .tiktok-embed-validator-error strong {
@@ -62,7 +51,8 @@
 }
 
 .tiktok-embed-validator-error p {
-	margin: 8px 0;
+	margin: 4px 0;
+	font-size: 13px;
 }
 
 .tiktok-embed-validator-help-text {
@@ -71,10 +61,7 @@
 	font-style: italic;
 }
 
-/* Action buttons. */
-.tiktok-embed-validator-actions {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	margin-top: 12px;
+/* Re-check button styling. */
+.tiktok-embed-validator-error .components-button {
+	margin-top: 4px !important;
 }

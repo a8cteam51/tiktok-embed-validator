@@ -2,16 +2,17 @@
 	'use strict';
 
 	var createElement = wp.element.createElement;
-	var Fragment = wp.element.Fragment;
+	var createPortal = wp.element.createPortal;
 	var useState = wp.element.useState;
+	var useEffect = wp.element.useEffect;
+	var useLayoutEffect = wp.element.useLayoutEffect;
 	var useRef = wp.element.useRef;
+	var useCallback = wp.element.useCallback;
 	var addFilter = wp.hooks.addFilter;
 	var createHigherOrderComponent = wp.compose.createHigherOrderComponent;
 	var Notice = wp.components.Notice;
 	var Button = wp.components.Button;
 	var Spinner = wp.components.Spinner;
-	var Placeholder = wp.components.Placeholder;
-	var TextControl = wp.components.TextControl;
 	var apiFetch = wp.apiFetch;
 	var __ = wp.i18n.__;
 
@@ -39,12 +40,12 @@
 	/**
 	 * Validate a TikTok video via REST API.
 	 */
-	function validateTikTokVideo( url ) {
+	function validateTikTokVideo( url, skipCache ) {
 		var videoId = extractVideoId( url );
 		var cacheKey = videoId || url;
 
-		// Check cache.
-		if ( validationCache[ cacheKey ] ) {
+		// Check cache unless skipping.
+		if ( ! skipCache && validationCache[ cacheKey ] ) {
 			return Promise.resolve( validationCache[ cacheKey ] );
 		}
 
@@ -76,357 +77,267 @@
 
 	/**
 	 * Higher-order component for TikTok embed validation.
+	 * Validates whenever a TikTok URL is set (embed button clicked).
 	 */
 	var withTikTokValidation = createHigherOrderComponent( function( BlockEdit ) {
 		return function( props ) {
 			var name = props.name;
+			var attributes = props.attributes;
 			var originalSetAttributes = props.setAttributes;
+			var isSelected = props.isSelected;
+			var url = attributes.url;
 
 			// State for validation.
 			var stateHook = useState( {
 				isValidating: false,
-				pendingUrl: null,
-				inputUrl: '',
-				validationResult: null
+				validationResult: null,
+				dismissed: false
 			} );
 			var state = stateHook[ 0 ];
 			var setState = stateHook[ 1 ];
 
-			// Ref to store current URL (always up to date, avoids closure issues).
-			var currentUrlRef = useRef( '' );
-			// Keep ref in sync with state.
-			currentUrlRef.current = state.inputUrl || state.pendingUrl || '';
-			
-			// Flag to skip validation (used when forcing embed).
-			var skipValidationRef = useRef( false );
+			// State for figure element (for portal).
+			var figureStateHook = useState( null );
+			var figureElement = figureStateHook[ 0 ];
+			var setFigureElement = figureStateHook[ 1 ];
+
+			// Ref for wrapper to find figure.
+			var wrapperRef = useRef( null );
 
 			// Only process embed blocks.
 			if ( name !== 'core/embed' ) {
 				return createElement( BlockEdit, props );
 			}
 
-			// Handle URL input change.
-			function handleInputChange( value ) {
-				setState( Object.assign( {}, state, { inputUrl: value } ) );
-			}
+			var isTikTokEmbed = isTikTokUrl( url );
 
-			// Handle form submit.
-			function handleSubmit( e ) {
-				if ( e ) {
-					e.preventDefault();
-				}
-				
-				var urlToCheck = state.inputUrl;
-				if ( ! urlToCheck ) {
-					return;
-				}
+			// Wrapped setAttributes - validates TikTok URLs when set.
+			var wrappedSetAttributes = useCallback( function( newAttributes ) {
+				// Always pass through to original setAttributes first (non-blocking).
+				originalSetAttributes( newAttributes );
 
-				// If not TikTok, just embed directly.
-				if ( ! isTikTokUrl( urlToCheck ) ) {
-					originalSetAttributes( { url: urlToCheck } );
+				// If setting a TikTok URL, validate it.
+				if ( newAttributes.url && isTikTokUrl( newAttributes.url ) ) {
+					// Clear cache to force fresh check when re-embedding.
+					clearCache( newAttributes.url );
+					
 					setState( {
-						isValidating: false,
-						pendingUrl: null,
-						inputUrl: '',
-						validationResult: null
+						isValidating: true,
+						validationResult: null,
+						dismissed: false
 					} );
-					return;
-				}
 
-				// TikTok URL - validate first.
-				setState( {
-					isValidating: true,
-					pendingUrl: urlToCheck,
-					inputUrl: urlToCheck,
-					validationResult: null
+					validateTikTokVideo( newAttributes.url, true ).then( function( result ) {
+						// Only show errors, not success.
+						if ( result.success === false ) {
+							setState( {
+								isValidating: false,
+								validationResult: result,
+								dismissed: false
+							} );
+						} else {
+							setState( {
+								isValidating: false,
+								validationResult: null,
+								dismissed: false
+							} );
+						}
+					} );
+				}
+			}, [ originalSetAttributes ] );
+
+		// Find figure element when block is selected (useLayoutEffect to avoid flicker).
+		useLayoutEffect( function() {
+			if ( ! isSelected ) {
+				if ( figureElement ) {
+					setFigureElement( null );
+				}
+				return;
+			}
+
+			if ( ! wrapperRef.current || ! isTikTokEmbed ) {
+				return;
+			}
+
+			var figure = wrapperRef.current.querySelector( 'figure.wp-block-embed' );
+			if ( figure && figure !== figureElement ) {
+				setFigureElement( figure );
+			}
+		}, [ isSelected, isTikTokEmbed, figureElement ] );
+
+		// Retry finding figure after validation completes (in case embed just rendered).
+		useEffect( function() {
+			if ( isSelected && wrapperRef.current && isTikTokEmbed && ! figureElement ) {
+				var timer = setTimeout( function() {
+					var figure = wrapperRef.current && wrapperRef.current.querySelector( 'figure.wp-block-embed' );
+					if ( figure ) {
+						setFigureElement( figure );
+					}
+				}, 100 );
+				return function() {
+					clearTimeout( timer );
+				};
+			}
+		}, [ isSelected, isTikTokEmbed, figureElement, state.validationResult ] );
+
+		// Validate on page load for existing TikTok embeds (only show errors).
+		useEffect( function() {
+			if ( isTikTokEmbed && url && ! state.validationResult && ! state.isValidating ) {
+				setState( function( prev ) {
+					return Object.assign( {}, prev, {
+						isValidating: true,
+						validationResult: null,
+						dismissed: false
+					} );
 				} );
 
-				validateTikTokVideo( urlToCheck ).then( function( result ) {
-					if ( result.success === true ) {
-						// Video OK - embed it.
-						currentUrlRef.current = '';
-						setState( {
-							isValidating: false,
-							pendingUrl: null,
-							inputUrl: '',
-							validationResult: null
+				validateTikTokVideo( url, false ).then( function( result ) {
+					// Only show errors, not success.
+					if ( result.success === false ) {
+						setState( function( prev ) {
+							return Object.assign( {}, prev, {
+								isValidating: false,
+								validationResult: result,
+								dismissed: false
+							} );
 						} );
-						originalSetAttributes( { url: urlToCheck } );
 					} else {
-						// Video has issues.
-						setState( {
-							isValidating: false,
-							pendingUrl: urlToCheck,
-							inputUrl: urlToCheck,
-							validationResult: result
+						setState( function( prev ) {
+							return Object.assign( {}, prev, {
+								isValidating: false,
+								validationResult: null,
+								dismissed: false
+							} );
 						} );
 					}
 				} );
 			}
+		}, [ url ] );
 
-			// Wrapped setAttributes - intercept TikTok URLs.
-			function handleSetAttributes( newAttributes ) {
-				// If skip validation flag is set, pass through without validation.
-				if ( skipValidationRef.current ) {
-					skipValidationRef.current = false;
-					originalSetAttributes( newAttributes );
-					return;
-				}
-				
-				// If not setting a URL or not TikTok, pass through.
-				if ( ! newAttributes.url || ! isTikTokUrl( newAttributes.url ) ) {
-					originalSetAttributes( newAttributes );
-					return;
-				}
+		// Handle dismiss.
+		function handleDismiss() {
+			setState( Object.assign( {}, state, { dismissed: true } ) );
+		}
 
-				// TikTok URL - validate via our form handler.
-				var urlToCheck = newAttributes.url;
-				
-				setState( {
-					isValidating: true,
-					pendingUrl: urlToCheck,
-					inputUrl: urlToCheck,
-					validationResult: null
-				} );
-
-				validateTikTokVideo( urlToCheck ).then( function( result ) {
-					if ( result.success === true ) {
-						currentUrlRef.current = '';
-						setState( {
-							isValidating: false,
-							pendingUrl: null,
-							inputUrl: '',
-							validationResult: null
-						} );
-						originalSetAttributes( { url: urlToCheck } );
-					} else {
-						setState( {
-							isValidating: false,
-							pendingUrl: urlToCheck,
-							inputUrl: urlToCheck,
-							validationResult: result
-						} );
-					}
-				} );
-			}
-
-			// Force embed button handler.
-			function handleForceEmbed( e ) {
-				e.preventDefault();
-				e.stopPropagation();
-				
-				var url = currentUrlRef.current;
-				if ( ! url ) {
-					return;
-				}
-
-				// Store URL before clearing state.
-				var urlToEmbed = url;
-				
-				// Set flag to skip validation on next setAttributes call.
-				skipValidationRef.current = true;
-				
-				currentUrlRef.current = '';
-				setState( {
-					isValidating: false,
-					pendingUrl: null,
-					inputUrl: '',
-					validationResult: null
-				} );
-
-				setTimeout( function() {
-					originalSetAttributes( { url: urlToEmbed } );
-				}, 0 );
-			}
-
-			// Retry button handler.
-			function handleRetry( e ) {
-				e.preventDefault();
-				e.stopPropagation();
-				
-				var url = currentUrlRef.current;
+			// Handle re-check.
+			function handleRecheck() {
 				if ( ! url ) {
 					return;
 				}
 
 				clearCache( url );
-				
+
 				setState( {
 					isValidating: true,
-					pendingUrl: url,
-					inputUrl: url,
-					validationResult: null
+					validationResult: null,
+					dismissed: false
 				} );
 
-				validateTikTokVideo( url ).then( function( result ) {
-					if ( result.success === true ) {
-						currentUrlRef.current = '';
-						setState( {
-							isValidating: false,
-							pendingUrl: null,
-							inputUrl: '',
-							validationResult: null
-						} );
-						originalSetAttributes( { url: url } );
-					} else {
-						setState( {
-							isValidating: false,
-							pendingUrl: url,
-							inputUrl: url,
-							validationResult: result
-						} );
-					}
-				} );
+			validateTikTokVideo( url, true ).then( function( result ) {
+				// Only show errors, not success.
+				if ( result.success === false ) {
+					setState( {
+						isValidating: false,
+						validationResult: result,
+						dismissed: false
+					} );
+				} else {
+					setState( {
+						isValidating: false,
+						validationResult: null,
+						dismissed: false
+					} );
+				}
+			} );
+		}
+
+			// Create new props with wrapped setAttributes.
+			var newProps = Object.assign( {}, props, {
+				setAttributes: wrappedSetAttributes
+			} );
+
+			// If not a TikTok embed, render with wrapped setAttributes.
+			if ( ! isTikTokEmbed ) {
+				return createElement( BlockEdit, newProps );
 			}
 
-			// Show validating state with form.
-			if ( state.isValidating ) {
-				return createElement(
-					Placeholder,
+			// Determine what to show.
+			var showValidating = state.isValidating;
+			var showError = ! state.dismissed && state.validationResult && state.validationResult.success === false;
+
+			// Create notice element.
+			var noticeElement = null;
+			if ( showValidating ) {
+				noticeElement = createElement(
+					'div',
+					{ className: 'tiktok-embed-validator-checking' },
+					createElement( Spinner, null ),
+					createElement( 'span', null, __( 'Checking TikTok video…', 'tiktok-embed-validator' ) )
+				);
+			} else if ( showError ) {
+				noticeElement = createElement(
+					Notice,
 					{
-						icon: 'embed-video',
-						label: __( 'Embed', 'tiktok-embed-validator' ),
-						className: 'wp-block-embed',
-						instructions: __( 'Paste a link to the content you want to display on your site.', 'tiktok-embed-validator' )
+						status: 'error',
+						isDismissible: true,
+						onDismiss: handleDismiss,
+						className: 'tiktok-embed-validator-error'
 					},
-					createElement(
-						'form',
-						{ onSubmit: handleSubmit, className: 'tiktok-embed-validator-form' },
-						createElement( TextControl, {
-							type: 'url',
-							value: state.inputUrl,
-							onChange: handleInputChange,
-							placeholder: __( 'Enter URL to embed here…', 'tiktok-embed-validator' ),
-							className: 'tiktok-embed-validator-input',
-							disabled: true
-						} ),
-						createElement(
-							Button,
-							{
-								variant: 'primary',
-								type: 'submit',
-								disabled: true,
-								className: 'tiktok-embed-validator-button'
-							},
-							__( 'Embed', 'tiktok-embed-validator' )
-						)
+					createElement( 'strong', null,
+						state.validationResult.error === 'video_403'
+							? __( 'TikTok Video Blocked', 'tiktok-embed-validator' )
+							: state.validationResult.error === 'video_url_not_found'
+								? __( 'Could Not Verify Video', 'tiktok-embed-validator' )
+								: __( 'TikTok Video Error', 'tiktok-embed-validator' )
+					),
+					createElement( 'p', null, state.validationResult.message ),
+					state.validationResult.error === 'video_403' && createElement(
+						'p',
+						{ className: 'tiktok-embed-validator-help-text' },
+						__( 'Possible causes: region lock, embedding disabled, or video removed.', 'tiktok-embed-validator' )
+					),
+					state.validationResult.error === 'video_url_not_found' && createElement(
+						'p',
+						{ className: 'tiktok-embed-validator-help-text' },
+						__( 'The video source URL could not be extracted for verification. This may indicate the video is unavailable.', 'tiktok-embed-validator' )
 					),
 					createElement(
-						'div',
-						{ className: 'tiktok-embed-validator-checking' },
-						createElement( Spinner, null ),
-						createElement( 'span', null, __( 'Checking TikTok video…', 'tiktok-embed-validator' ) )
+						Button,
+						{
+							variant: 'secondary',
+							type: 'button',
+							onClick: handleRecheck,
+							style: { marginTop: '8px' }
+						},
+						__( 'Re-check', 'tiktok-embed-validator' )
 					)
 				);
 			}
 
-			// Show error state with form.
-			if ( state.validationResult && state.validationResult.success === false ) {
-				return createElement(
-          Placeholder,
-          {
-            icon: "embed-video",
-            label: __("Embed", "tiktok-embed-validator"),
-            className: "wp-block-embed",
-            instructions: __(
-              "Paste a link to the content you want to display on your site.",
-              "tiktok-embed-validator"
-            ),
-          },
-          createElement(
-            "form",
-            {
-              onSubmit: handleSubmit,
-              className: "tiktok-embed-validator-form",
-            },
-            createElement(TextControl, {
-              type: "url",
-              value: state.inputUrl,
-              onChange: handleInputChange,
-              placeholder: __(
-                "Enter URL to embed here…",
-                "tiktok-embed-validator"
-              ),
-              className: "tiktok-embed-validator-input",
-            }),
-            createElement(
-              Button,
-              {
-                variant: "primary",
-                type: "submit",
-                disabled: !state.inputUrl,
-                className: "tiktok-embed-validator-button",
-              },
-              __("Embed", "tiktok-embed-validator")
-            )
-          ),
-          createElement(
-            Notice,
-            {
-              status: "error",
-              isDismissible: false,
-              className: "tiktok-embed-validator-error",
-            },
-            createElement(
-              "strong",
-              null,
-              state.validationResult.error === "video_403"
-                ? __("TikTok Video Blocked", "tiktok-embed-validator")
-                : state.validationResult.error === "video_url_not_found"
-                ? __("Could Not Verify Video", "tiktok-embed-validator")
-                : __("TikTok Video Error", "tiktok-embed-validator")
-            ),
-            createElement("p", null, state.validationResult.message),
-            state.validationResult.error === "video_403" &&
-              createElement(
-                "p",
-                { className: "tiktok-embed-validator-help-text" },
-                __(
-                  "Possible causes: region lock, embedding disabled, or video removed.",
-                  "tiktok-embed-validator"
-                )
-              ),
-            state.validationResult.error === "video_url_not_found" &&
-              createElement(
-                "p",
-                { className: "tiktok-embed-validator-help-text" },
-                __(
-                  "The video source URL could not be extracted for verification. This may indicate the video is unavailable.",
-                  "tiktok-embed-validator"
-                )
-              ),
-            createElement(
-              "div",
-              { className: "tiktok-embed-validator-actions" },
-              createElement(
-                Button,
-                {
-                  variant: "secondary",
-                  type: "button",
-                  onClick: handleRetry,
-                },
-                __("Re-check", "tiktok-embed-validator")
-              ),
-              createElement(
-                Button,
-                {
-                  variant: "link",
-                  type: "button",
-                  onClick: handleForceEmbed,
-                },
-                __("Embed anyway", "tiktok-embed-validator")
-              )
-            )
-          )
-        );
-			}
+			// Determine if we should portal inside figure.
+			var shouldPortal = isSelected && figureElement;
 
-			// Normal render with wrapped setAttributes.
-			var newProps = Object.assign( {}, props, {
-				setAttributes: handleSetAttributes
-			} );
-
-			return createElement( BlockEdit, newProps );
+			return createElement(
+				'div',
+				{ className: 'tiktok-embed-validator-wrapper', ref: wrapperRef },
+				// Show notice outside when not selected or figure not found.
+				noticeElement && ! shouldPortal && createElement(
+					'div',
+					{ className: 'tiktok-embed-validator-notice-outside' },
+					noticeElement
+				),
+				// Render the block.
+				createElement( BlockEdit, newProps ),
+				// Portal notice inside figure when selected.
+				noticeElement && shouldPortal && createPortal(
+					createElement(
+						'div',
+						{ className: 'tiktok-embed-validator-notice-inside' },
+						noticeElement
+					),
+					figureElement
+				)
+			);
 		};
 	}, 'withTikTokValidation' );
 

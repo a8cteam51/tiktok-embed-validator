@@ -170,15 +170,6 @@ The `cached` field indicates if the result was served from the server-side trans
 1. Copy the `tiktok-embed-validator` folder to `/wp-content/plugins/`
 2. Activate the plugin in WordPress admin
 
-Or for mu-plugin installation:
-1. Copy to `/wp-content/mu-plugins/tiktok-embed-validator/`
-2. Create loader at `/wp-content/mu-plugins/tiktok-embed-validator.php`:
-
-```php
-<?php
-require_once __DIR__ . '/tiktok-embed-validator/tiktok-embed-validator.php';
-```
-
 ## Limitations
 
 - **Server-dependent**: Relies on parsing TikTok's embed page structure
@@ -195,10 +186,6 @@ The plugin couldn't find the video URL in TikTok's embed page. This may indicate
 ### Slow validation
 
 Server-side requests to TikTok may be slow depending on your hosting. Default timeout is 15-20 seconds. Results are cached for 24 hours to avoid repeated slow requests.
-
-### False negatives on staging
-
-If your staging server has restricted network access, validation may fail for valid videos. The plugin treats timeouts as success to minimize false positives.
 
 ### Many embeds on one page
 

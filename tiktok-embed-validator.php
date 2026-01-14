@@ -87,15 +87,27 @@ class TikTok_Embed_Validator {
 					return current_user_can( 'edit_posts' );
 				},
 				'args'                => array(
-					'url' => array(
+					'url'        => array(
 						'required'          => true,
 						'type'              => 'string',
 						'sanitize_callback' => 'esc_url_raw',
+					),
+					'skip_cache' => array(
+						'required' => false,
+						'type'     => 'boolean',
+						'default'  => false,
 					),
 				),
 			)
 		);
 	}
+
+	/**
+	 * Transient cache duration in seconds (24 hours).
+	 *
+	 * @var int
+	 */
+	const CACHE_DURATION = DAY_IN_SECONDS;
 
 	/**
 	 * Check if a TikTok video is accessible.
@@ -105,7 +117,8 @@ class TikTok_Embed_Validator {
 	 * @return WP_REST_Response
 	 */
 	public function check_tiktok_video( $request ) {
-		$url = $request->get_param( 'url' );
+		$url        = $request->get_param( 'url' );
+		$skip_cache = $request->get_param( 'skip_cache' );
 
 		// Extract video ID.
 		$video_id = $this->extract_video_id( $url );
@@ -119,6 +132,15 @@ class TikTok_Embed_Validator {
 					'video_id' => null,
 				)
 			);
+		}
+
+		// Check transient cache first (unless skip_cache is true).
+		if ( ! $skip_cache ) {
+			$cached_result = get_transient( 'tiktok_valid_' . $video_id );
+			if ( false !== $cached_result ) {
+				$cached_result['cached'] = true;
+				return rest_ensure_response( $cached_result );
+			}
 		}
 
 		// Fetch TikTok's embed page to get video data.
@@ -138,6 +160,7 @@ class TikTok_Embed_Validator {
 		);
 
 		if ( is_wp_error( $response ) ) {
+			// Don't cache network failures - they may be temporary.
 			return rest_ensure_response(
 				array(
 					'success'  => false,
@@ -152,15 +175,16 @@ class TikTok_Embed_Validator {
 		$body        = wp_remote_retrieve_body( $response );
 
 		if ( $status_code >= 400 ) {
-			return rest_ensure_response(
-				array(
-					'success'  => false,
-					'error'    => 'embed_page_error',
-					'message'  => sprintf( __( 'TikTok embed page returned HTTP %d.', 'tiktok-embed-validator' ), $status_code ),
-					'video_id' => $video_id,
-					'status'   => $status_code,
-				)
+			$result = array(
+				'success'  => false,
+				'error'    => 'embed_page_error',
+				'message'  => sprintf( __( 'TikTok embed page returned HTTP %d.', 'tiktok-embed-validator' ), $status_code ),
+				'video_id' => $video_id,
+				'status'   => $status_code,
 			);
+			// Cache errors for shorter duration (1 hour) - video might become available.
+			set_transient( 'tiktok_valid_' . $video_id, $result, HOUR_IN_SECONDS );
+			return rest_ensure_response( $result );
 		}
 
 		// Extract video URL from the embed page.
@@ -169,50 +193,55 @@ class TikTok_Embed_Validator {
 		if ( ! $video_url ) {
 			// Check for error indicators in the page.
 			if ( $this->page_has_error_indicators( $body ) ) {
-				return rest_ensure_response(
-					array(
-						'success'  => false,
-						'error'    => 'video_unavailable',
-						'message'  => __( 'Video appears to be unavailable or restricted.', 'tiktok-embed-validator' ),
-						'video_id' => $video_id,
-					)
+				$result = array(
+					'success'  => false,
+					'error'    => 'video_unavailable',
+					'message'  => __( 'Video appears to be unavailable or restricted.', 'tiktok-embed-validator' ),
+					'video_id' => $video_id,
 				);
+				// Cache errors for shorter duration (1 hour).
+				set_transient( 'tiktok_valid_' . $video_id, $result, HOUR_IN_SECONDS );
+				return rest_ensure_response( $result );
 			}
 
-			return rest_ensure_response(
-				array(
-					'success'   => false,
-					'error'     => 'video_url_not_found',
-					'message'   => __( 'Could not extract video URL. Unable to verify playback.', 'tiktok-embed-validator' ),
-					'video_id'  => $video_id,
-					'video_url' => null,
-				)
+			$result = array(
+				'success'   => false,
+				'error'     => 'video_url_not_found',
+				'message'   => __( 'Could not extract video URL. Unable to verify playback.', 'tiktok-embed-validator' ),
+				'video_id'  => $video_id,
+				'video_url' => null,
 			);
+			// Cache for shorter duration - might be temporary issue.
+			set_transient( 'tiktok_valid_' . $video_id, $result, HOUR_IN_SECONDS );
+			return rest_ensure_response( $result );
 		}
 
 		// Test the video URL.
 		$video_check = $this->check_video_url( $video_url );
 
 		if ( is_wp_error( $video_check ) ) {
-			return rest_ensure_response(
-				array(
-					'success'   => false,
-					'error'     => $video_check->get_error_code(),
-					'message'   => $video_check->get_error_message(),
-					'video_id'  => $video_id,
-					'video_url' => $video_url,
-				)
-			);
-		}
-
-		return rest_ensure_response(
-			array(
-				'success'   => true,
-				'message'   => __( 'Video source is accessible.', 'tiktok-embed-validator' ),
+			$result = array(
+				'success'   => false,
+				'error'     => $video_check->get_error_code(),
+				'message'   => $video_check->get_error_message(),
 				'video_id'  => $video_id,
 				'video_url' => $video_url,
-			)
+			);
+			// Cache 403 errors for longer (24 hours) - they're usually permanent.
+			$cache_duration = 'video_403' === $video_check->get_error_code() ? self::CACHE_DURATION : HOUR_IN_SECONDS;
+			set_transient( 'tiktok_valid_' . $video_id, $result, $cache_duration );
+			return rest_ensure_response( $result );
+		}
+
+		$result = array(
+			'success'   => true,
+			'message'   => __( 'Video source is accessible.', 'tiktok-embed-validator' ),
+			'video_id'  => $video_id,
+			'video_url' => $video_url,
 		);
+		// Cache successful results for 24 hours.
+		set_transient( 'tiktok_valid_' . $video_id, $result, self::CACHE_DURATION );
+		return rest_ensure_response( $result );
 	}
 
 	/**

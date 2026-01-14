@@ -14,13 +14,13 @@ Without validation, editors unknowingly publish posts with broken video embeds.
 
 ## Solution
 
-This plugin **intercepts the embed process** and validates TikTok videos before allowing them to be embedded:
+This plugin validates TikTok videos and shows warnings in the editor:
 
 1. User pastes a TikTok URL and clicks "Embed"
-2. Plugin validates the video server-side before embedding
-3. If blocked (403), shows error and **prevents** the embed
-4. User can "Re-check" or "Embed anyway" to override
-5. If valid, allows the embed to proceed normally
+2. Plugin validates the video server-side (non-blocking)
+3. If blocked (403), shows error notice above the embed
+4. User can click "Re-check" to verify again
+5. Existing embeds are validated on page load
 
 ## How It Works
 
@@ -36,15 +36,17 @@ This plugin **intercepts the embed process** and validates TikTok videos before 
 │  User pastes TikTok URL → Clicks "Embed"                  │
 │                         ↓                                  │
 │              ┌──────────────────┐                         │
-│              │ Checking TikTok  │                         │
+│              │ Checking TikTok  │  (non-blocking)         │
 │              │     video...     │                         │
 │              └──────────────────┘                         │
 │                         ↓                                  │
 │         ┌───────────────┴───────────────┐                 │
 │         ↓                               ↓                 │
 │    ✅ Valid                        ❌ Blocked             │
-│    Embed proceeds                  Shows error below form │
-│                                    [Re-check] [Embed anyway]│
+│    No notice shown                 Error notice shown     │
+│                                    above embed [Re-check] │
+│                                                            │
+│    (Embed proceeds in both cases)                         │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -77,11 +79,12 @@ TikTok embeds load inside **cross-origin iframes**, making client-side detection
 ## Features
 
 - **Pre-embed validation**: Catches issues before publishing
-- **Non-blocking**: "Embed anyway" option for edge cases
+- **Non-blocking**: Errors are shown but don't prevent embedding
 - **Smart detection**: Only validates TikTok URLs, others embed normally
 - **Works for new & existing blocks**: Validates when adding new embeds or editing existing ones
-- **Caching**: Results cached to avoid repeated checks
-- **User-friendly**: Clear error messages with actionable options
+- **Server-side caching**: Results cached in WordPress transients (24 hours for success/403, 1 hour for temporary errors)
+- **Staggered validation**: Page load validates embeds in batches of 20 to prevent server overload
+- **User-friendly**: Clear error messages with Re-check option
 
 ## Files
 
@@ -108,9 +111,15 @@ POST /wp-json/tiktok-embed-validator/v1/check
 
 ```json
 {
-  "url": "https://www.tiktok.com/@username/video/1234567890"
+  "url": "https://www.tiktok.com/@username/video/1234567890",
+  "skip_cache": false
 }
 ```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| url | string | required | TikTok video URL |
+| skip_cache | boolean | false | Bypass server cache for fresh check |
 
 ### Response (Success)
 
@@ -119,9 +128,12 @@ POST /wp-json/tiktok-embed-validator/v1/check
   "success": true,
   "message": "Video source is accessible.",
   "video_id": "1234567890",
-  "video_url": "https://v16m.tiktokcdn.com/..."
+  "video_url": "https://v16m.tiktokcdn.com/...",
+  "cached": true
 }
 ```
+
+The `cached` field indicates if the result was served from the server-side transient cache.
 
 ### Response (Error - 403)
 
@@ -178,15 +190,23 @@ require_once __DIR__ . '/tiktok-embed-validator/tiktok-embed-validator.php';
 
 ### "Could not extract video source URL"
 
-The plugin couldn't find the video URL in TikTok's embed page. This may indicate the video is unavailable. You can still click "Embed anyway" to embed it.
+The plugin couldn't find the video URL in TikTok's embed page. This may indicate the video is unavailable. The embed still works - an error notice is shown for awareness.
 
 ### Slow validation
 
-Server-side requests to TikTok may be slow depending on your hosting. Default timeout is 15-20 seconds.
+Server-side requests to TikTok may be slow depending on your hosting. Default timeout is 15-20 seconds. Results are cached for 24 hours to avoid repeated slow requests.
 
 ### False negatives on staging
 
 If your staging server has restricted network access, validation may fail for valid videos. The plugin treats timeouts as success to minimize false positives.
+
+### Many embeds on one page
+
+The plugin processes page-load validations in batches of 20 with 500ms delays between batches to prevent server overload. Combined with server-side caching, subsequent page loads are instant.
+
+### Clearing cached results
+
+Click the "Re-check" button on any error notice to force a fresh validation, bypassing both client and server caches.
 
 ## License
 

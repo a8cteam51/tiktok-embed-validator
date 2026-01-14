@@ -19,6 +19,50 @@
 	// Cache validation results per video ID.
 	var validationCache = {};
 
+	// Validation queue for staggered processing.
+	var validationQueue = [];
+	var isProcessingQueue = false;
+	var BATCH_SIZE = 20;
+	var BATCH_DELAY = 500; // ms between batches
+
+	/**
+	 * Add a validation request to the queue.
+	 */
+	function queueValidation( url, callback ) {
+		validationQueue.push( { url: url, callback: callback } );
+		processQueue();
+	}
+
+	/**
+	 * Process the validation queue in batches.
+	 */
+	function processQueue() {
+		if ( isProcessingQueue || validationQueue.length === 0 ) {
+			return;
+		}
+
+		isProcessingQueue = true;
+
+		// Take a batch of items.
+		var batch = validationQueue.splice( 0, BATCH_SIZE );
+
+		// Process batch in parallel.
+		var promises = batch.map( function( item ) {
+			return validateTikTokVideoDirect( item.url, false ).then( function( result ) {
+				item.callback( result );
+				return result;
+			} );
+		} );
+
+		// After batch completes, wait then process next batch.
+		Promise.all( promises ).then( function() {
+			isProcessingQueue = false;
+			if ( validationQueue.length > 0 ) {
+				setTimeout( processQueue, BATCH_DELAY );
+			}
+		} );
+	}
+
 	/**
 	 * Check if a URL is a TikTok URL.
 	 */
@@ -38,13 +82,13 @@
 	}
 
 	/**
-	 * Validate a TikTok video via REST API.
+	 * Validate a TikTok video via REST API (direct call).
 	 */
-	function validateTikTokVideo( url, skipCache ) {
+	function validateTikTokVideoDirect( url, skipCache ) {
 		var videoId = extractVideoId( url );
 		var cacheKey = videoId || url;
 
-		// Check cache unless skipping.
+		// Check client cache unless skipping.
 		if ( ! skipCache && validationCache[ cacheKey ] ) {
 			return Promise.resolve( validationCache[ cacheKey ] );
 		}
@@ -52,7 +96,7 @@
 		return apiFetch( {
 			path: '/tiktok-embed-validator/v1/check',
 			method: 'POST',
-			data: { url: url }
+			data: { url: url, skip_cache: skipCache }
 		} ).then( function( response ) {
 			validationCache[ cacheKey ] = response;
 			return response;
@@ -64,6 +108,21 @@
 			};
 			return errorResponse;
 		} );
+	}
+
+	/**
+	 * Validate a TikTok video - uses queue for page load, direct for user actions.
+	 */
+	function validateTikTokVideo( url, skipCache, useQueue ) {
+		// If useQueue is true, add to queue for staggered processing.
+		if ( useQueue ) {
+			return new Promise( function( resolve ) {
+				queueValidation( url, resolve );
+			} );
+		}
+
+		// Direct call for user-initiated actions.
+		return validateTikTokVideoDirect( url, skipCache );
 	}
 
 	/**
@@ -127,7 +186,7 @@
 						dismissed: false
 					} );
 
-					validateTikTokVideo( newAttributes.url, true ).then( function( result ) {
+					validateTikTokVideo( newAttributes.url, true, false ).then( function( result ) {
 						// Only show errors, not success.
 						if ( result.success === false ) {
 							setState( {
@@ -191,7 +250,7 @@
 					} );
 				} );
 
-				validateTikTokVideo( url, false ).then( function( result ) {
+				validateTikTokVideo( url, false, true ).then( function( result ) {
 					// Only show errors, not success.
 					if ( result.success === false ) {
 						setState( function( prev ) {
@@ -233,7 +292,7 @@
 					dismissed: false
 				} );
 
-			validateTikTokVideo( url, true ).then( function( result ) {
+			validateTikTokVideo( url, true, false ).then( function( result ) {
 				// Only show errors, not success.
 				if ( result.success === false ) {
 					setState( {

@@ -43,7 +43,9 @@ class TikTok_Embed_Validator {
 	 */
 	private function __construct() {
 		add_action( 'enqueue_block_editor_assets', array( $this, 'enqueue_editor_assets' ) );
+		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_frontend_assets' ) );
 		add_action( 'rest_api_init', array( $this, 'register_rest_routes' ) );
+		add_filter( 'oembed_ttl', array( $this, 'shorten_tiktok_oembed_ttl' ), 10, 4 );
 	}
 
 	/**
@@ -69,6 +71,45 @@ class TikTok_Embed_Validator {
 			array(),
 			filemtime( $plugin_dir . 'assets/css/editor.css' )
 		);
+	}
+
+	/**
+	 * Enqueue front-end script that re-initialises TikTok embed.js when embeds fail to hydrate.
+	 *
+	 * @return void
+	 */
+	public function enqueue_frontend_assets() {
+		if ( ! has_block( 'core/embed' ) ) {
+			return;
+		}
+
+		$plugin_url = plugin_dir_url( __FILE__ );
+		$plugin_dir = plugin_dir_path( __FILE__ );
+
+		wp_enqueue_script(
+			'tiktok-embed-validator-frontend',
+			$plugin_url . 'assets/js/frontend.js',
+			array(),
+			filemtime( $plugin_dir . 'assets/js/frontend.js' ),
+			true
+		);
+	}
+
+	/**
+	 * Reduce the oEmbed cache TTL for TikTok URLs so WordPress fetches fresh embed HTML more often.
+	 *
+	 * @param int    $ttl      Default TTL in seconds.
+	 * @param string $url      The oEmbed URL.
+	 * @param array  $attr     Embed attributes.
+	 * @param int    $post_id  Post ID.
+	 *
+	 * @return int
+	 */
+	public function shorten_tiktok_oembed_ttl( $ttl, $url, $attr, $post_id ) {
+		if ( false !== strpos( $url, 'tiktok.com' ) ) {
+			return 6 * HOUR_IN_SECONDS;
+		}
+		return $ttl;
 	}
 
 	/**
@@ -103,11 +144,11 @@ class TikTok_Embed_Validator {
 	}
 
 	/**
-	 * Transient cache duration in seconds (24 hours).
+	 * Transient cache duration in seconds (6 hours).
 	 *
 	 * @var int
 	 */
-	const CACHE_DURATION = DAY_IN_SECONDS;
+	const CACHE_DURATION = 6 * HOUR_IN_SECONDS;
 
 	/**
 	 * Check if a TikTok video is accessible.
@@ -227,7 +268,7 @@ class TikTok_Embed_Validator {
 				'video_id'  => $video_id,
 				'video_url' => $video_url,
 			);
-			// Cache 403 errors for longer (24 hours) - they're usually permanent.
+			// Cache 403 errors for longer (6 hours) - they're usually permanent.
 			$cache_duration = 'video_403' === $video_check->get_error_code() ? self::CACHE_DURATION : HOUR_IN_SECONDS;
 			set_transient( 'tiktok_valid_' . $video_id, $result, $cache_duration );
 			return rest_ensure_response( $result );
@@ -239,7 +280,7 @@ class TikTok_Embed_Validator {
 			'video_id'  => $video_id,
 			'video_url' => $video_url,
 		);
-		// Cache successful results for 24 hours.
+		// Cache successful results for 6 hours.
 		set_transient( 'tiktok_valid_' . $video_id, $result, self::CACHE_DURATION );
 		return rest_ensure_response( $result );
 	}

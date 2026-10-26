@@ -164,28 +164,6 @@ The `cached` field indicates if the result was served from the server-side trans
 }
 ```
 
-## Alerts
-
-The validator can tell the team running the site about problems it runs into, by posting a signed alert to a webhook. Nothing is sent unless the site's `wp-config.php` defines all three of:
-
-```php
-define( 'A8CSP_PARTNER_SITE_ALERTS_BLOG_ID', 123456789 ); // The site's WordPress.com blog ID.
-define( 'A8CSP_PARTNER_SITE_ALERTS_SECRET', '…' );        // The site's signing secret.
-define( 'A8CSP_PARTNER_SITE_ALERTS_URL', 'https://…' );   // The webhook to send to.
-```
-
-| Alert | Sent when |
-|-------|-----------|
-| `tiktok_validator_unable_to_check` | 5 checks in an hour got no answer about the video: TikTok rate-limited or failed the check (HTTP 429 or 5xx), or the request failed |
-| `tiktok_validator_flagged` | 3 TikToks were flagged in the editor within ten minutes |
-
-Each alert lists up to ten of the URLs and reasons, and a cached result is never counted twice. Each request is signed with an HMAC-SHA256 of `{timestamp}.{body}` in `X-A8CSP-Signature`, with the timestamp in `X-A8CSP-Timestamp`. The alert is sent without waiting for an answer, so the editor's check isn't slowed down.
-
-To turn alerts down:
-
-- `define( 'TIKTOK_EMBED_VALIDATOR_ALERTS', false );` stops them all, and a list of alert names keeps only those.
-- The `tiktok_embed_validator_alert_thresholds` filter changes the counts that send one.
-
 ## Requirements
 
 - WordPress 6.7+
@@ -203,7 +181,7 @@ To turn alerts down:
 - **May need updates**: If TikTok changes their embed implementation
 - **Not 100% coverage**: Some edge cases may pass validation but still fail
 - **Network-dependent**: Server must be able to reach TikTok's servers
-- **Rate limits**: TikTok rate-limits its `/embed/v2/` page per IP. While it does, videos are not checked, so a blocked or deleted video can pass without a notice. The `tiktok_validator_unable_to_check` alert reports it when this keeps happening
+- **Rate limits**: TikTok rate-limits its `/embed/v2/` page per IP. While it does, videos are not checked, so a blocked or deleted video can pass without a notice
 
 ## Troubleshooting
 

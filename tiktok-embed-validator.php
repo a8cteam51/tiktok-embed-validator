@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TikTok Embed Validator
  * Description: Validates TikTok embed blocks in the editor and shows errors if the video source is inaccessible (403).
- * Version: 1.1.0
+ * Version: 1.0.1
  * Author: WordPress Special Projects
  * Author URI: https://wpspecialprojects.wordpress.com
  * License: GPLv2 or later
@@ -123,7 +123,7 @@ class TikTok_Embed_Validator {
 			'/check',
 			array(
 				'methods'             => 'POST',
-				'callback'            => array( $this, 'check_and_report' ),
+				'callback'            => array( $this, 'check_tiktok_video' ),
 				'permission_callback' => function () {
 					return current_user_can( 'edit_posts' );
 				},
@@ -149,173 +149,6 @@ class TikTok_Embed_Validator {
 	 * @var int
 	 */
 	const CACHE_DURATION = 6 * HOUR_IN_SECONDS;
-
-	/**
-	 * Check a TikTok video, and count what a fresh check ran into toward an alert.
-	 *
-	 * @param WP_REST_Request $request The request object.
-	 *
-	 * @return WP_REST_Response
-	 */
-	public function check_and_report( $request ) {
-		$response = $this->check_tiktok_video( $request );
-		$this->report( (string) $request->get_param( 'url' ), (array) $response->get_data() );
-
-		return $response;
-	}
-
-	/**
-	 * Count a fresh check's result toward an alert: one TikTok couldn't answer, or one the editor flagged.
-	 *
-	 * A cached result was counted when it was fresh, and a passing one has nothing to report.
-	 *
-	 * @param string $url    The TikTok URL checked.
-	 * @param array  $result The check's result.
-	 *
-	 * @return void
-	 */
-	private function report( $url, $result ) {
-		if ( ! empty( $result['cached'] ) ) {
-			return;
-		}
-
-		$error  = (string) ( $result['error'] ?? '' );
-		$status = (int) ( $result['status'] ?? 0 );
-
-		if ( 'request_failed' === $error || 429 === $status || $status >= 500 ) {
-			$this->count_toward_alert(
-				'tiktok_validator_unable_to_check',
-				HOUR_IN_SECONDS,
-				sprintf( '%1$s: %2$s', 'request_failed' === $error ? 'request failed' : 'HTTP ' . $status, $url ),
-				/* translators: %d: number of checks. */
-				__( 'The TikTok Embed Validator couldn\'t check %d TikToks in an hour', 'tiktok-embed-validator' )
-			);
-		} elseif ( false === ( $result['success'] ?? null ) ) {
-			$this->count_toward_alert(
-				'tiktok_validator_flagged',
-				10 * MINUTE_IN_SECONDS,
-				sprintf( '%1$s: %2$s', $url, (string) ( $result['message'] ?? $error ) ),
-				/* translators: %d: number of TikToks. */
-				__( 'The TikTok Embed Validator flagged %d TikToks in the editor in ten minutes', 'tiktok-embed-validator' )
-			);
-		}
-	}
-
-	/**
-	 * Count something within a fixed window, and send an alert with up to ten examples once the count
-	 * reaches its threshold.
-	 *
-	 * @param string $event   The alert name.
-	 * @param int    $window  The window, in seconds, from the first count.
-	 * @param string $example An example to list in the alert.
-	 * @param string $title   The alert's title, with %d for the count.
-	 *
-	 * @return void
-	 */
-	private function count_toward_alert( $event, $window, $example, $title ) {
-		if ( ! $this->alert_enabled( $event ) ) {
-			return;
-		}
-
-		$key   = 'tiktok_embed_validator_alert_' . $event;
-		$tally = get_transient( $key );
-
-		if ( ! is_array( $tally ) || time() >= ( $tally['until'] ?? 0 ) ) {
-			$tally = array(
-				'count'    => 0,
-				'examples' => array(),
-				'until'    => time() + $window,
-			);
-		}
-
-		++$tally['count'];
-
-		if ( count( $tally['examples'] ) < 10 ) {
-			$tally['examples'][] = $example;
-		}
-
-		/**
-		 * Filters how many of each problem send an alert.
-		 *
-		 * @param array $thresholds Counts keyed by alert name.
-		 */
-		$thresholds = apply_filters(
-			'tiktok_embed_validator_alert_thresholds',
-			array(
-				'tiktok_validator_unable_to_check' => 5,
-				'tiktok_validator_flagged'         => 3,
-			)
-		);
-
-		if ( $tally['count'] < max( 1, (int) ( $thresholds[ $event ] ?? 1 ) ) ) {
-			set_transient( $key, $tally, max( 1, $tally['until'] - time() ) );
-			return;
-		}
-
-		delete_transient( $key );
-		$this->send_alert( $event, sprintf( $title, $tally['count'] ), $tally['examples'] );
-	}
-
-	/**
-	 * Whether alerts are configured and this one is wanted.
-	 *
-	 * Configured by the site's wp-config.php: A8CSP_PARTNER_SITE_ALERTS_BLOG_ID, _SECRET and _URL say
-	 * where to send them, and TIKTOK_EMBED_VALIDATOR_ALERTS set to false stops them, or to a list of
-	 * alert names keeps only those.
-	 *
-	 * @param string $event The alert name.
-	 *
-	 * @return bool
-	 */
-	private function alert_enabled( $event ) {
-		if ( ! defined( 'A8CSP_PARTNER_SITE_ALERTS_BLOG_ID' ) || ! defined( 'A8CSP_PARTNER_SITE_ALERTS_SECRET' ) || ! defined( 'A8CSP_PARTNER_SITE_ALERTS_URL' ) ) {
-			return false;
-		}
-
-		$wanted = defined( 'TIKTOK_EMBED_VALIDATOR_ALERTS' ) ? constant( 'TIKTOK_EMBED_VALIDATOR_ALERTS' ) : true;
-
-		return is_array( $wanted ) ? in_array( $event, $wanted, true ) : false !== $wanted;
-	}
-
-	/**
-	 * Send an alert, signed with the site's secret: an HMAC-SHA256 of `{timestamp}.{body}`. Fire and
-	 * forget, so the editor's check never waits on it.
-	 *
-	 * @param string $event The alert name.
-	 * @param string $title One line saying what's wrong.
-	 * @param array  $lines Details, one per line.
-	 *
-	 * @return void
-	 */
-	private function send_alert( $event, $title, $lines ) {
-		$body = (string) wp_json_encode(
-			array(
-				'blog_id'    => (int) constant( 'A8CSP_PARTNER_SITE_ALERTS_BLOG_ID' ),
-				'site_url'   => home_url( '/' ),
-				'event'      => $event,
-				'title'      => $title,
-				'lines'      => array_values( $lines ),
-				'links'      => array(),
-				'dedupe_key' => '',
-			)
-		);
-
-		$timestamp = (string) time();
-
-		wp_remote_post(
-			(string) constant( 'A8CSP_PARTNER_SITE_ALERTS_URL' ),
-			array(
-				'blocking' => false,
-				'timeout'  => 3,
-				'headers'  => array(
-					'Content-Type'      => 'application/json',
-					'X-A8CSP-Timestamp' => $timestamp,
-					'X-A8CSP-Signature' => 'sha256=' . hash_hmac( 'sha256', $timestamp . '.' . $body, (string) constant( 'A8CSP_PARTNER_SITE_ALERTS_SECRET' ) ),
-				),
-				'body'     => $body,
-			)
-		);
-	}
 
 	/**
 	 * Check if a TikTok video is accessible.

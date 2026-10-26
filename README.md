@@ -76,6 +76,11 @@ TikTok embeds load inside **cross-origin iframes**, making client-side detection
 
 *Timeouts are treated as success because TikTok video URLs have IP-bound tokens. If the embed page loads, the video will work for visitors.
 
+Two cases are not checked at all, and show no notice:
+
+- **Photo posts** (`tiktok.com/@user/photo/<id>`) have no video file to check.
+- **TikTok rate-limiting or failing the check** (HTTP 429 or 5xx from the embed page) says nothing about the video. The result is not cached, so the next check asks TikTok again. Results cached as errors by 1.0.0 for these codes are dropped and checked again.
+
 ## Features
 
 - **Pre-embed validation**: Catches issues before publishing
@@ -176,6 +181,7 @@ The `cached` field indicates if the result was served from the server-side trans
 - **May need updates**: If TikTok changes their embed implementation
 - **Not 100% coverage**: Some edge cases may pass validation but still fail
 - **Network-dependent**: Server must be able to reach TikTok's servers
+- **Rate limits**: TikTok rate-limits its `/embed/v2/` page per IP. While it does, videos are not checked, so a blocked or deleted video can pass without a notice
 
 ## Troubleshooting
 

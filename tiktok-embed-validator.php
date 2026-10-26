@@ -2,7 +2,7 @@
 /**
  * Plugin Name: TikTok Embed Validator
  * Description: Validates TikTok embed blocks in the editor and shows errors if the video source is inaccessible (403).
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: WordPress Special Projects
  * Author URI: https://wpspecialprojects.wordpress.com
  * License: GPLv2 or later
@@ -161,6 +161,17 @@ class TikTok_Embed_Validator {
 		$url        = $request->get_param( 'url' );
 		$skip_cache = $request->get_param( 'skip_cache' );
 
+		// Photo posts have no video file to check.
+		if ( preg_match( '/photo\/(\d+)/', $url ) ) {
+			return rest_ensure_response(
+				array(
+					'success'  => true,
+					'message'  => __( 'TikTok photo post: there is no video source to check.', 'tiktok-embed-validator' ),
+					'video_id' => null,
+				)
+			);
+		}
+
 		// Extract video ID.
 		$video_id = $this->extract_video_id( $url );
 
@@ -178,6 +189,14 @@ class TikTok_Embed_Validator {
 		// Check transient cache first (unless skip_cache is true).
 		if ( ! $skip_cache ) {
 			$cached_result = get_transient( 'tiktok_valid_' . $video_id );
+			$cached_status = is_array( $cached_result ) ? (int) ( $cached_result['status'] ?? 0 ) : 0;
+
+			// Rate limits and server errors cached by earlier versions aren't failures. Drop them and check again.
+			if ( 429 === $cached_status || $cached_status >= 500 ) {
+				delete_transient( 'tiktok_valid_' . $video_id );
+				$cached_result = false;
+			}
+
 			if ( false !== $cached_result ) {
 				$cached_result['cached'] = true;
 				return rest_ensure_response( $cached_result );
@@ -214,6 +233,18 @@ class TikTok_Embed_Validator {
 
 		$status_code = wp_remote_retrieve_response_code( $response );
 		$body        = wp_remote_retrieve_body( $response );
+
+		// Rate limits and server errors say nothing about the video. Don't flag or cache them.
+		if ( 429 === $status_code || $status_code >= 500 ) {
+			return rest_ensure_response(
+				array(
+					'success'  => true,
+					'message'  => sprintf( __( 'TikTok embed page returned HTTP %d, so the video was not checked.', 'tiktok-embed-validator' ), $status_code ),
+					'video_id' => $video_id,
+					'status'   => $status_code,
+				)
+			);
+		}
 
 		if ( $status_code >= 400 ) {
 			$result = array(
